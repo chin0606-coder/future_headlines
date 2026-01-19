@@ -5,7 +5,6 @@ on:
     - cron: '0 * * * *'    # 每小時監控
     - cron: '0 0 * * *'    # 每天 08:00 晨報
   
-  # ✨ 這裡升級了！加入手動控制面板
   workflow_dispatch:
     inputs:
       force_mode:
@@ -49,19 +48,19 @@ jobs:
           echo "目前選擇模式: $INPUT_MODE"
           echo "目前 UTC 時間: $CURRENT_HOUR"
 
-          # 邏輯判斷
-          if [ "$INPUT_MODE" == "Force Daily Brief" ]; then
+          # 邏輯判斷 (修正版：比對完整字串)
+          if [[ "$INPUT_MODE" == *"Force Daily Brief"* ]]; then
             echo "☀️ CEO 手動指令：強制發送晨報！"
-            python polymarket_monitor.py --daily --telegram
+            python polymarket_monitor.py --daily --once --telegram
 
-          elif [ "$INPUT_MODE" == "Force Hourly Scan" ]; then
+          elif [[ "$INPUT_MODE" == *"Force Hourly Scan"* ]]; then
             echo "🔍 CEO 手動指令：強制掃描異動..."
             python polymarket_monitor.py --once --telegram
 
           # 自動排程邏輯 (Auto)
           elif [ "$CURRENT_HOUR" == "00" ] && [ "${{ github.event_name }}" == "schedule" ]; then
             echo "⏰ 晨報時間到，自動發送..."
-            python polymarket_monitor.py --daily --telegram
+            python polymarket_monitor.py --daily --once --telegram
           else
             echo "🕐 例行檢查，執行每小時掃描..."
             python polymarket_monitor.py --once --telegram
