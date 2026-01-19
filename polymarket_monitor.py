@@ -483,7 +483,7 @@ def main():
         enable_telegram=args.telegram,
         history_file=args.history_path,
         daily_mode=args.daily,
-    )
+ )
     
     try:
         if args.once:
