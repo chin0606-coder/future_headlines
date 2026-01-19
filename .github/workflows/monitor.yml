@@ -2,14 +2,15 @@ name: FH Intelligence Radar
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每小時整點執行 (UTC 時間)
-  workflow_dispatch:      # 允許手動測試
+    - cron: '0 * * * *'    # 任務 A: 每小時整點執行 (監控異動)
+    - cron: '0 0 * * *'    # 任務 B: 每天 UTC 00:00 (台灣 08:00) 執行 (每日晨報)
+  workflow_dispatch:        # 允許手動測試
 
 jobs:
   scan-and-report:
     runs-on: ubuntu-latest
-    permissions:          # 關鍵：給予寫入權限，否則無法存檔
-      contents: write
+    permissions:
+      contents: write       # 給予寫入權限 (存檔用)
 
     steps:
       - name: 📥 檢出代碼
@@ -24,19 +25,30 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: 📡 執行監控與推播
+      # 判斷是「每日晨報」還是「每小時監控」
+      - name: 📡 執行情報掃描
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        # 關鍵修正：加上 --telegram 參數，並使用 --once 單次執行
-        run: python polymarket_monitor.py --once --telegram
+        run: |
+          # 取得當前小時 (UTC)
+          CURRENT_HOUR=$(date -u +%H)
+          
+          # 如果是 UTC 00:00 (台灣 08:00)，執行晨報模式
+          if [ "$CURRENT_HOUR" == "00" ] && [ "${{ github.event_name }}" == "schedule" ]; then
+            echo "☀️ 偵測到晨報時間，啟動 Daily Mode..."
+            python polymarket_monitor.py --daily --telegram
+          else
+            # 其他時間，執行一般監控模式
+            echo "🔍 執行每小時異動監控..."
+            python polymarket_monitor.py --once --telegram
+          fi
 
       - name: 💾 記憶存檔 (Commit history)
         run: |
           git config --global user.name "FH-Bot"
           git config --global user.email "bot@futureheadlines.com"
           
-          # 檢查 history.json 是否有變動
           if [[ -n $(git status -s history.json) ]]; then
             git add history.json
             git commit -m "📝 Update market history [skip ci]"
