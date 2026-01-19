@@ -1,36 +1,46 @@
-name: FH Polymarket Monitor
+name: FH Intelligence Radar
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每小時執行一次
-  workflow_dispatch:      # 允許手動點擊執行
+    - cron: '0 * * * *'  # 每小時整點執行 (UTC 時間)
+  workflow_dispatch:      # 允許手動測試
 
 jobs:
-  build:
+  scan-and-report:
     runs-on: ubuntu-latest
+    permissions:          # 關鍵：給予寫入權限，否則無法存檔
+      contents: write
+
     steps:
-      - name: 檢出代碼
+      - name: 📥 檢出代碼
         uses: actions/checkout@v3
 
-      - name: 設定 Python
+      - name: 🐍 設定 Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      - name: 安裝依賴
+      - name: 📦 安裝依賴
         run: |
-          pip install requests schedule
+          pip install -r requirements.txt
 
-      - name: 執行監控
+      - name: 📡 執行監控與推播
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python polymarket_monitor.py --once  # 注意這裡要用 --once 參數
+        # 關鍵修正：加上 --telegram 參數，並使用 --once 單次執行
+        run: python polymarket_monitor.py --once --telegram
 
-      - name: 自動提交 history.json (確保增量偵測有效)
+      - name: 💾 記憶存檔 (Commit history)
         run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
-          git add history.json
-          git commit -m "Update history.json [skip ci]" || echo "No changes to commit"
-          git push
+          git config --global user.name "FH-Bot"
+          git config --global user.email "bot@futureheadlines.com"
+          
+          # 檢查 history.json 是否有變動
+          if [[ -n $(git status -s history.json) ]]; then
+            git add history.json
+            git commit -m "📝 Update market history [skip ci]"
+            git push
+          else
+            echo "✅ 無顯著數據變動，無需存檔。"
+          fi
