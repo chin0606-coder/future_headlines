@@ -80,7 +80,7 @@ class PolymarketMonitor:
         return any(k.lower() in title.lower() for k in self.EXCLUDE_KEYWORDS)
     
     def parse_float(self, value) -> float:
-        """安全地將數據轉換為浮點數"""
+        """安全地將數據轉換為浮點數 (V16 核心修正)"""
         try:
             if value is None: return 0.0
             return float(value)
@@ -102,7 +102,7 @@ class PolymarketMonitor:
 
         event_id = event.get('id', '') 
         title = event.get('question', '')
-        volume = self.parse_float(event.get('volume')) # ✅ 強制轉型
+        volume = self.parse_float(event.get('volume')) # ✅ 強制轉型：解決 TypeError
         current_delta = self.calculate_delta(event.get('one_day_price_change'))
         
         if self.should_exclude(title): return False, "", None
@@ -149,7 +149,7 @@ class PolymarketMonitor:
             title = ev.get('question', '')
             if self.should_exclude(title): continue
             
-            # ✅ 強制轉型：確保音量和價格都是數字
+            # ✅ V16 修正：確保所有數據先轉成數字再處理
             vol = self.parse_float(ev.get('volume'))
             price = self.parse_float(ev.get('price') or ev.get('currentPrice') or ev.get('lastTradePrice'))
             change = self.calculate_delta(ev.get('one_day_price_change'))
@@ -164,7 +164,7 @@ class PolymarketMonitor:
 
         if not filtered: return ""
 
-        # 因為已經轉成 float，這裡的排序就不會報錯了
+        # 這裡現在安全了，因為 vol 是數字
         top_volume = sorted(filtered, key=lambda x: x["volume"], reverse=True)[:5]
         top_gainers = sorted(filtered, key=lambda x: x["change_pct"], reverse=True)[:3]
 
