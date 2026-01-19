@@ -49,8 +49,8 @@ class PolymarketMonitor:
         # 高額門檻：降到 150,000 USD，以更快捕捉大額流入
         self.HIGH_VOLUME_THRESHOLD = 150000
         
-        # API 端點：改用 Markets（交易櫃台），才能取得具體問題與勝率價格
-        self.API_URL = "https://gamma-api.polymarket.com/markets?closed=false&limit=500&active=true"
+        # API 端點
+        self.API_URL = "https://gamma-api.polymarket.com/events?closed=false&limit=500&active=true"
         
         # 合規過濾關鍵字
         self.EXCLUDE_KEYWORDS = ["Taiwan", "台灣", "taiwan"]
@@ -143,8 +143,7 @@ class PolymarketMonitor:
             return False, "", None
 
         event_id = event.get('slug', '')
-        # Markets 端點：優先用 question，退而求其次用 title
-        title = event.get('question') or event.get('title', '')
+        title = event.get('question', '')
         volume = event.get('volume', 0)
         one_day_change = event.get('one_day_price_change')
         current_delta = self.calculate_delta(one_day_change)
@@ -181,7 +180,7 @@ class PolymarketMonitor:
     
     def format_telegram_message(self, event: Dict, alert_type: str, delta_change: Optional[float] = None) -> str:
         """格式化 Telegram 消息"""
-        title = event.get('question') or event.get('title', 'N/A')
+        title = event.get('question', 'N/A')
         category = event.get('category', '未分類')
         volume = event.get('volume', 0)
         one_day_change = event.get('one_day_price_change')
@@ -235,20 +234,17 @@ class PolymarketMonitor:
         # 合規過濾 & 基礎字段計算
         filtered = []
         for ev in events:
-            title = ev.get('question') or ev.get('title', '')
+            title = ev.get('question', '')
             if self.should_exclude(title):
                 continue
             volume = ev.get('volume', 0) or 0
             change_pct = self.calculate_delta(ev.get('one_day_price_change'))
-            prob_raw = ev.get('current_price')
-            prob = (prob_raw or 0) * 100
-            slug = ev.get('slug', '')
+            prob = ev.get('current_price', 0) * 100 if ev.get('current_price') is not None else 0
             filtered.append({
                 "title": title,
                 "volume": volume,
                 "change_pct": change_pct,
                 "prob": prob,
-                "slug": slug,
             })
 
         if not filtered:
@@ -260,12 +256,7 @@ class PolymarketMonitor:
         scan_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         def fmt_item(item):
-            title = item["title"]
-            # 隱藏式連結：點擊標題直接跳 Polymarket（Telegram 使用 HTML 解析）
-            if item.get("slug"):
-                url = f"https://polymarket.com/event/{item['slug']}"
-                title = f'<a href="{url}">{title}</a>'
-            return f"• {title} | 機率 {item['prob']:.1f}% | 量 {self.format_short_volume(item['volume'])}"
+            return f"• {item['title']} | 機率 {item['prob']:.1f}% | 量 {self.format_short_volume(item['volume'])}"
 
         lines = [
             "☀️ FH 每日情報：全球資金都在賭什麼？",
@@ -329,14 +320,13 @@ class PolymarketMonitor:
             new_history = {}
             for event in events:
                 event_id = event.get('slug', '')
-                title = event.get('question') or event.get('title', '')
-                if event_id and not self.should_exclude(title):
+                if event_id and not self.should_exclude(event.get('question', '')):
                     one_day_change = event.get('one_day_price_change')
                     current_delta = self.calculate_delta(one_day_change)
                     new_history[event_id] = {
                         'delta': current_delta,
                         'volume': event.get('volume', 0),
-                        'title': title,
+                        'title': event.get('question', ''),
                         'last_updated': datetime.now().isoformat()
                     }
             
@@ -354,11 +344,10 @@ class PolymarketMonitor:
                     continue
                 one_day_change = event.get('one_day_price_change')
                 current_delta = self.calculate_delta(one_day_change)
-                title = event.get('question') or event.get('title', '')
                 updated_history[event_id] = {
                     'delta': current_delta,
                     'volume': event.get('volume', 0),
-                    'title': title,
+                    'title': event.get('question', ''),
                     'last_updated': datetime.now().isoformat()
                 }
 
@@ -398,11 +387,10 @@ class PolymarketMonitor:
             # 更新歷史記錄（不論是否發送通知）
             one_day_change = event.get('one_day_price_change')
             current_delta = self.calculate_delta(one_day_change)
-            title = event.get('question') or event.get('title', '')
             updated_history[event_id] = {
                 'delta': current_delta,
                 'volume': event.get('volume', 0),
-                'title': title,
+                'title': event.get('question', ''),
                 'last_updated': datetime.now().isoformat()
             }
             
@@ -483,7 +471,7 @@ def main():
         enable_telegram=args.telegram,
         history_file=args.history_path,
         daily_mode=args.daily,
- )
+    )
     
     try:
         if args.once:
