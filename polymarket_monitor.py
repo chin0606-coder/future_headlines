@@ -25,6 +25,7 @@ class PolymarketMonitor:
         telegram_chat_id: str = "",
         history_file: str = "history.json",
         enable_telegram: bool = False,
+        daily_mode: bool = False,
     ):
         """
         初始化監控器
@@ -34,11 +35,13 @@ class PolymarketMonitor:
             telegram_chat_id: Telegram Chat ID
             history_file: 歷史記錄檔案路徑
             enable_telegram: 是否啟用 Telegram 推播（預設關閉）
+            daily_mode: 是否啟用每日晨報模式（預設關閉）
         """
         self.telegram_bot_token = telegram_bot_token
         self.telegram_chat_id = telegram_chat_id
         self.history_path = Path(history_file).expanduser().resolve()
         self.enable_telegram = enable_telegram
+        self.daily_mode = daily_mode
         
         # 警報門檻設定
         self.VOLATILITY_THRESHOLD = 5.0  # 異動門檻：5.0%
@@ -117,6 +120,14 @@ class PolymarketMonitor:
         if one_day_price_change is None:
             return 0.0
         return one_day_price_change * 100
+
+    def format_short_volume(self, volume: float) -> str:
+        """將成交量格式化為 K/M 簡寫"""
+        if volume >= 1_000_000:
+            return f"{volume/1_000_000:.1f}M"
+        if volume >= 1_000:
+            return f"{volume/1_000:.1f}K"
+        return f"{volume:.0f}"
     
     def should_alert(self, event: Dict, history: Dict[str, Dict]) -> Tuple[bool, str, Optional[float]]:
         """
@@ -127,6 +138,10 @@ class PolymarketMonitor:
             alert_type: "new_event" | "new_volatility" | "high_volume"
             delta_change: 增量變化（僅用於 new_volatility）
         """
+        # 每日晨報模式不做門檻判斷，直接跳過
+        if self.daily_mode:
+            return False, "", None
+
         event_id = event.get('slug', '')
         title = event.get('question', '')
         volume = event.get('volume', 0)
@@ -210,6 +225,54 @@ class PolymarketMonitor:
 🔗 連結: {polymarket_url}
 """
         return message.strip()
+
+    def build_daily_report(self, events: List[Dict]) -> str:
+        """生成每日晨報內容（Top Volume 5 + Top Gainers 3）"""
+        if not events:
+            return ""
+
+        # 合規過濾 & 基礎字段計算
+        filtered = []
+        for ev in events:
+            title = ev.get('question', '')
+            if self.should_exclude(title):
+                continue
+            volume = ev.get('volume', 0) or 0
+            change_pct = self.calculate_delta(ev.get('one_day_price_change'))
+            prob = ev.get('current_price', 0) * 100 if ev.get('current_price') is not None else 0
+            filtered.append({
+                "title": title,
+                "volume": volume,
+                "change_pct": change_pct,
+                "prob": prob,
+            })
+
+        if not filtered:
+            return ""
+
+        top_volume = sorted(filtered, key=lambda x: x["volume"], reverse=True)[:5]
+        top_gainers = sorted(filtered, key=lambda x: x["change_pct"], reverse=True)[:3]
+
+        scan_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        def fmt_item(item):
+            return f"• {item['title']} | 機率 {item['prob']:.1f}% | 量 {self.format_short_volume(item['volume'])}"
+
+        lines = [
+            "☀️ FH 每日情報：全球資金都在賭什麼？",
+            f"🕐 掃描時間: {scan_time}",
+            "",
+            "🔥 資金熱點 (Top Volume)",
+        ]
+        lines += [fmt_item(it) for it in top_volume] if top_volume else ["(無資料)"]
+
+        lines += [
+            "",
+            "🚀 飆升潛力 (Top Gainers)",
+        ]
+        lines += [fmt_item(it) for it in top_gainers] if top_gainers else ["(無資料)"]
+
+        return "\n".join(lines)
     
     def send_telegram_notification(self, message: str) -> bool:
         """發送 Telegram 通知；如未啟用則僅回傳 False"""
@@ -234,7 +297,7 @@ class PolymarketMonitor:
             return False
     
     def scan_and_alert(self):
-        """執行掃描並發送警報"""
+        """執行掃描並發送警報；每日晨報模式會跳過門檻判斷並生成彙總"""
         print(f"\n{'='*60}")
         print(f"🕐 掃描時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*60}")
@@ -251,8 +314,8 @@ class PolymarketMonitor:
             print("⚠️ 未獲取到任何事件，跳過本次掃描")
             return
         
-        # 冷啟動保護：僅建立數據基準，不發送通知
-        if self.is_cold_start:
+        # 冷啟動保護：僅建立數據基準，不發送通知（每日晨報模式不跳過）
+        if self.is_cold_start and not self.daily_mode:
             print("🔵 冷啟動模式：正在建立數據基準，不發送通知...")
             new_history = {}
             for event in events:
@@ -271,8 +334,48 @@ class PolymarketMonitor:
             print(f"✅ 冷啟動完成，已記錄 {len(new_history)} 個事件")
             self.is_cold_start = False
             return
-        
-        # 正常掃描模式
+
+        # 每日晨報模式：不做門檻判斷，產生摘要並推播/打印
+        if self.daily_mode:
+            updated_history = history.copy()
+            for event in events:
+                event_id = event.get('slug', '')
+                if not event_id:
+                    continue
+                one_day_change = event.get('one_day_price_change')
+                current_delta = self.calculate_delta(one_day_change)
+                updated_history[event_id] = {
+                    'delta': current_delta,
+                    'volume': event.get('volume', 0),
+                    'title': event.get('question', ''),
+                    'last_updated': datetime.now().isoformat()
+                }
+
+            # 保存最新基準
+            self.save_history(updated_history)
+
+            report = self.build_daily_report(events)
+            if report:
+                if self.enable_telegram:
+                    sent = self.send_telegram_notification(report)
+                    if sent:
+                        print("✅ 已發送每日晨報")
+                    else:
+                        print("❌ 發送每日晨報失敗，已在終端打印內容")
+                        print(report)
+                else:
+                    print("🔔 每日晨報（未推播）：")
+                    print(report)
+            else:
+                print("⚠️ 每日晨報沒有可用資料（可能全部被過濾）")
+
+            print(f"\n📊 掃描完成:")
+            print(f"   - 處理事件數: {len(events)}")
+            print(f"   - 歷史記錄數: {len(updated_history)}")
+            print(f"{'='*60}\n")
+            return
+
+        # 正常掃描模式（門檻判斷）
         alerts_sent = 0
         updated_history = history.copy()
         
@@ -340,6 +443,7 @@ def main():
     """主函數"""
     parser = argparse.ArgumentParser(description='Future Headlines Polymarket Monitor')
     parser.add_argument('--once', action='store_true', help='僅執行一次掃描，不持續運行')
+    parser.add_argument('--daily', action='store_true', help='啟用每日晨報模式（Top Volume / Top Gainers）')
     parser.add_argument('--token', type=str, help='Telegram Bot Token（可選，優先使用環境變數）')
     parser.add_argument('--chat-id', type=str, help='Telegram Chat ID（可選，優先使用環境變數）')
     parser.add_argument('--telegram', action='store_true', help='啟用 Telegram 推播（預設關閉）')
@@ -366,6 +470,7 @@ def main():
         telegram_chat_id=telegram_chat_id,
         enable_telegram=args.telegram,
         history_file=args.history_path,
+        daily_mode=args.daily,
     )
     
     try:
