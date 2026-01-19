@@ -343,7 +343,7 @@ def main():
     parser.add_argument('--token', type=str, help='Telegram Bot Token（可選，優先使用環境變數）')
     parser.add_argument('--chat-id', type=str, help='Telegram Chat ID（可選，優先使用環境變數）')
     parser.add_argument('--telegram', action='store_true', help='啟用 Telegram 推播（預設關閉）')
-        parser.add_argument('--history-path', type=str, default='history.json', help='歷史記錄檔案路徑（預設 repo 根目錄下 history.json）')
+    parser.add_argument('--history-path', type=str, default='history.json', help='歷史記錄檔案路徑（預設 repo 根目錄下 history.json）')
     
     args = parser.parse_args()
     
